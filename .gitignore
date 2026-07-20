@@ -13,6 +13,7 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+**/.yarn/install-state.gz
 
 # Env / secrets
 .env
