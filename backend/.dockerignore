@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+venv_py313_old/
+storage/
+.git
+.gitignore
+.env
+.env.*
+.claude/
