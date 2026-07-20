@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for audiocast on 2026-07-20T22:55:16Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = 'audiocast'
 primary_region = 'gru'
 
@@ -5,6 +10,10 @@ primary_region = 'gru'
 
 [env]
   DATA_DIR = '/data'
+
+[[mounts]]
+  source = 'data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8000
@@ -16,7 +25,3 @@ primary_region = 'gru'
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '1gb'
-
-[mounts]
-  source = 'data'
-  destination = '/data'
