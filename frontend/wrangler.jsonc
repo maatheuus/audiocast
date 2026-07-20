@@ -1,0 +1,11 @@
+{
+  "name": "depois-eu-ouco",
+  "compatibility_date": "2026-07-20",
+  "main": "worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  }
+}
