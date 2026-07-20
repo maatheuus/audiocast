@@ -1,0 +1,29 @@
+# Python
+venv/
+venv_py313_old/
+__pycache__/
+*.pyc
+
+# Backend local data (downloaded audio, db)
+backend/storage/audio/
+backend/storage/*.sqlite3
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Env / secrets
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.sw?
+
+# Claude Code local writes
+.claude/.cc-writes/
