@@ -1,6 +1,6 @@
 interface Env {
   ASSETS: Fetcher
-  API_ORIGIN: string
+  FLY_BACKEND_URL: string
 }
 
 export default {
@@ -8,8 +8,17 @@ export default {
     const url = new URL(request.url)
 
     if (url.pathname.startsWith("/api/")) {
-      const target = new URL(url.pathname + url.search, env.API_ORIGIN)
-      return fetch(new Request(target, request))
+      try {
+        const target = new URL(url.pathname + url.search, env.FLY_BACKEND_URL)
+        console.log(`proxying ${request.method} ${url.pathname} -> ${target}`)
+        return await fetch(new Request(target, request))
+      } catch (err) {
+        console.log(`proxy failed for ${url.pathname}: ${err}`)
+        return new Response(
+          JSON.stringify({ detail: "Backend unreachable. Try again shortly." }),
+          { status: 502, headers: { "Content-Type": "application/json" } },
+        )
+      }
     }
 
     return env.ASSETS.fetch(request)
