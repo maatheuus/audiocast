@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlmodel import Field, Session, SQLModel, create_engine
 
-STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
+STORAGE_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parent.parent / "storage")))
 AUDIO_DIR = STORAGE_DIR / "audio"
 DB_PATH = STORAGE_DIR / "db.sqlite3"
 
