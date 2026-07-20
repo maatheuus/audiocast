@@ -1,5 +1,5 @@
 {
-  "name": "depois-eu-ouco",
+  "name": "audiocast",
   "compatibility_date": "2026-07-20",
   "main": "worker/index.ts",
   "assets": {
