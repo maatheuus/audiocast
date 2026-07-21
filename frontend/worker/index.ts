@@ -1,6 +1,7 @@
 interface Env {
   ASSETS: Fetcher
   FLY_BACKEND_URL: string
+  API_TOKEN?: string
 }
 
 export default {
@@ -11,7 +12,11 @@ export default {
       try {
         const target = new URL(url.pathname + url.search, env.FLY_BACKEND_URL)
         console.log(`proxying ${request.method} ${url.pathname} -> ${target}`)
-        return await fetch(new Request(target, request))
+        const proxied = new Request(target, request)
+        // The backend is publicly reachable, so it only trusts requests carrying this
+        // shared token. It stays server-side; the browser never sees it.
+        if (env.API_TOKEN) proxied.headers.set("X-API-Token", env.API_TOKEN)
+        return await fetch(proxied)
       } catch (err) {
         console.log(`proxy failed for ${url.pathname}: ${err}`)
         return new Response(
