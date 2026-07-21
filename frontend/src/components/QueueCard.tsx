@@ -4,15 +4,31 @@ import {
   FileText,
   Loader2,
   RotateCcw,
+  Undo2,
   X,
 } from "lucide-react"
+import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatDuration } from "@/lib/format"
 import type { QueueItem } from "@/types"
+
+const TRANSCRIBE_LANG_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "pt", label: "PT" },
+  { value: "en", label: "EN" },
+  { value: "es", label: "ES" },
+]
 
 const STATUS_LABELS: Record<QueueItem["status"], string> = {
   queued: "Na fila",
@@ -43,9 +59,10 @@ interface QueueCardProps {
   isTranscribing: boolean
   isReconverting: boolean
   onSelect: (item: QueueItem) => void
-  onTranscribe: (id: string) => void
+  onTranscribe: (id: string, language: string | null) => void
   onDelete: (id: string) => void
   onArchive: (id: string) => void
+  onUnarchive: (item: QueueItem) => void
   onReconvert: (item: QueueItem) => void
 }
 
@@ -58,8 +75,10 @@ export function QueueCard({
   onTranscribe,
   onDelete,
   onArchive,
+  onUnarchive,
   onReconvert,
 }: QueueCardProps) {
+  const [transcribeLang, setTranscribeLang] = useState("auto")
   const audioRemoved = item.status === "archived" && !item.audio_path
   const isPlayable =
     (item.status === "ready" ||
@@ -69,11 +88,12 @@ export function QueueCard({
     !!item.audio_path
   const canTranscribe = isPlayable && !item.transcript && !isTranscribing
   const canArchive = isPlayable && item.status !== "archived"
+  const canUnarchive = item.status === "archived" && !!item.audio_path
 
   return (
     <Card
       onClick={() => isPlayable && onSelect(item)}
-      className={`flex flex-row items-center gap-4 p-3 transition-colors ${
+      className={`flex flex-row items-center gap-4 p-2! transition-colors ${
         isPlayable ? "hover:bg-muted cursor-pointer" : ""
       } ${isSelected ? "ring-primary ring-2" : ""}`}
     >
@@ -108,14 +128,36 @@ export function QueueCard({
         onClick={(e) => e.stopPropagation()}
       >
         {canTranscribe && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => onTranscribe(item.id)}
-          >
-            <FileText className="size-4" />
-            Transcrever
-          </Button>
+          <>
+            <Select
+              value={transcribeLang}
+              onValueChange={(v) => setTranscribeLang(v ?? "auto")}
+            >
+              <SelectTrigger size="sm" className="w-[4.5rem]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSCRIBE_LANG_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                onTranscribe(
+                  item.id,
+                  transcribeLang === "auto" ? null : transcribeLang,
+                )
+              }
+            >
+              <FileText className="size-4" />
+              Transcrever
+            </Button>
+          </>
         )}
         {isTranscribing && (
           <Button size="sm" variant="secondary" disabled>
@@ -146,6 +188,16 @@ export function QueueCard({
             aria-label="Marcar como ouvido"
           >
             <Archive className="size-4" />
+          </Button>
+        )}
+        {canUnarchive && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => onUnarchive(item)}
+            aria-label="Voltar para fila"
+          >
+            <Undo2 className="size-4" />
           </Button>
         )}
         <a

@@ -17,9 +17,11 @@ def get_model() -> WhisperModel:
     return WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 
 
-def transcribe(audio_path: str) -> tuple[str, list[TranscriptSegment], str]:
+def transcribe(
+    audio_path: str, language: str | None = None
+) -> tuple[str, list[TranscriptSegment], str]:
     model = get_model()
-    segments, info = model.transcribe(audio_path)
+    segments, info = model.transcribe(audio_path, language=language)
     segment_list: list[TranscriptSegment] = []
     for segment in segments:
         text = segment.text.strip()

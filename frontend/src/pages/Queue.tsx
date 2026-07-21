@@ -1,15 +1,20 @@
 import { Loader2, Plus } from "lucide-react"
-import { useEffect, useState } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useEffect, useRef, useState } from "react"
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
 import { Player } from "@/components/Player"
 import { QueueCard } from "@/components/QueueCard"
 import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import * as api from "@/lib/api"
-import type { QueueItem } from "@/types"
+import { formatDuration } from "@/lib/format"
+import type { QueueItem, VideoInfo } from "@/types"
+
+const YOUTUBE_URL_RE =
+  /^https?:\/\/(www\.|m\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/)|youtu\.be\/)[\w-]{6,}/i
 
 interface QueueNavigationState {
   openItemId?: string
@@ -19,29 +24,49 @@ interface QueueNavigationState {
 export function Queue() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [items, setItems] = useState<QueueItem[]>([])
-  const [url, setUrl] = useState("")
   const [isAdding, setIsAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pendingSeek, setPendingSeek] = useState<number | null>(null)
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(new Set())
   const [reconvertingIds, setReconvertingIds] = useState<Set<string>>(new Set())
-  const [activeTab, setActiveTab] = useState<"queue" | "listened">("queue")
-  const [search, setSearch] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [preview, setPreview] = useState<VideoInfo | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const previewUrlRef = useRef<string>("")
+
+  const activeTab: "queue" | "listened" =
+    searchParams.get("tab") === "listened" ? "listened" : "queue"
+  const search = searchParams.get("q") ?? ""
+  const selectedId = searchParams.get("item")
+  const url = searchParams.get("url") ?? ""
+
+  function updateParam(key: string, value: string | null) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value == null || value === "") next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+  }
 
   useEffect(() => {
     api
       .fetchQueue()
       .then(setItems)
       .catch(() => {})
+      .finally(() => setIsLoading(false))
   }, [])
 
   // Opened from the Highlights page: jump straight to the episode and seek.
   useEffect(() => {
     const state = location.state as QueueNavigationState | null
     if (state?.openItemId) {
-      setSelectedId(state.openItemId)
+      updateParam("item", state.openItemId)
       setPendingSeek(state.seekTo ?? null)
       navigate(location.pathname, { replace: true, state: null })
     }
@@ -52,9 +77,37 @@ export function Queue() {
   }
 
   function selectItem(item: QueueItem) {
-    setSelectedId(item.id)
+    updateParam("item", item.id)
     setPendingSeek(null)
   }
+
+  // Preview: fetch title/thumbnail when URL looks like a YouTube link.
+  useEffect(() => {
+    const trimmed = url.trim()
+    if (!YOUTUBE_URL_RE.test(trimmed)) {
+      setPreview(null)
+      setPreviewLoading(false)
+      previewUrlRef.current = ""
+      return
+    }
+    if (trimmed === previewUrlRef.current) return
+    const handle = window.setTimeout(() => {
+      previewUrlRef.current = trimmed
+      setPreviewLoading(true)
+      api
+        .fetchInfo(trimmed)
+        .then((info) => {
+          if (previewUrlRef.current === trimmed) setPreview(info)
+        })
+        .catch(() => {
+          if (previewUrlRef.current === trimmed) setPreview(null)
+        })
+        .finally(() => {
+          if (previewUrlRef.current === trimmed) setPreviewLoading(false)
+        })
+    }, 500)
+    return () => window.clearTimeout(handle)
+  }, [url])
 
   async function handleAdd() {
     if (!url.trim() || isAdding) return
@@ -82,7 +135,8 @@ export function Queue() {
         tempItem,
         ...prev.filter((i) => i.id !== tempItem.id),
       ])
-      setUrl("")
+      updateParam("url", null)
+      setPreview(null)
 
       const converted = await api.convert(tempItem.url)
       updateItem(converted)
@@ -100,10 +154,10 @@ export function Queue() {
     }
   }
 
-  async function handleTranscribe(id: string) {
+  async function handleTranscribe(id: string, language: string | null) {
     setTranscribingIds((prev) => new Set(prev).add(id))
     try {
-      const updated = await api.transcribe(id)
+      const updated = await api.transcribe(id, language)
       updateItem(updated)
     } catch {
       setItems((prev) =>
@@ -121,7 +175,7 @@ export function Queue() {
   async function handleDelete(id: string) {
     await api.deleteQueueItem(id).catch(() => {})
     setItems((prev) => prev.filter((i) => i.id !== id))
-    if (selectedId === id) setSelectedId(null)
+    if (selectedId === id) updateParam("item", null)
   }
 
   async function handleArchive(id: string) {
@@ -130,6 +184,16 @@ export function Queue() {
       updateItem(updated)
     } catch {
       // ignore, item stays as-is
+    }
+  }
+
+  async function handleUnarchive(item: QueueItem) {
+    const nextStatus = item.transcript ? "done" : "ready"
+    try {
+      const updated = await api.patchQueueItem(item.id, { status: nextStatus })
+      updateItem(updated)
+    } catch {
+      // ignore, item stays archived
     }
   }
 
@@ -171,22 +235,57 @@ export function Queue() {
       <div
         className={`mx-auto max-w-3xl px-4 ${selectedItem ? "pb-56" : "pb-10"}`}
       >
-        <div className="mb-6 flex gap-2">
-          <Input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-            placeholder="Cole o link do YouTube aqui…"
-            disabled={isAdding}
-          />
-          <Button onClick={handleAdd} disabled={isAdding || !url.trim()}>
-            {isAdding ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Plus className="size-4" />
-            )}
-            Adicionar
-          </Button>
+        <div className="mb-4 flex flex-col gap-2">
+          <div className="flex gap-2">
+            <Input
+              value={url}
+              onChange={(e) => updateParam("url", e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder="Cole o link do YouTube aqui…"
+              disabled={isAdding}
+            />
+            <Button onClick={handleAdd} disabled={isAdding || !url.trim()}>
+              {isAdding ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+              Adicionar
+            </Button>
+          </div>
+
+          {(previewLoading || preview) && (
+            <Card className="flex flex-row items-center gap-3 p-2">
+              {previewLoading && !preview ? (
+                <>
+                  <Skeleton className="h-14 w-14 shrink-0 rounded-lg" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-1/3" />
+                  </div>
+                </>
+              ) : preview ? (
+                <>
+                  <img
+                    src={preview.thumbnail}
+                    alt={preview.title}
+                    className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                  />
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="text-foreground truncate text-sm font-medium">
+                      {preview.title}
+                    </p>
+                    <p className="text-muted-foreground truncate text-xs">
+                      {preview.channel} · {formatDuration(preview.duration)}
+                    </p>
+                  </div>
+                  {previewLoading && (
+                    <Loader2 className="text-muted-foreground size-4 shrink-0 animate-spin" />
+                  )}
+                </>
+              ) : null}
+            </Card>
+          )}
         </div>
 
         {addError && (
@@ -196,7 +295,9 @@ export function Queue() {
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <Tabs
             value={activeTab}
-            onValueChange={(v) => setActiveTab(v as "queue" | "listened")}
+            onValueChange={(v) =>
+              updateParam("tab", v === "listened" ? "listened" : null)
+            }
           >
             <TabsList>
               <TabsTrigger value="queue">Fila</TabsTrigger>
@@ -205,7 +306,7 @@ export function Queue() {
           </Tabs>
           <Input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => updateParam("q", e.target.value)}
             placeholder="Buscar por título, canal ou transcrição…"
             className="max-w-xs"
           />
@@ -215,7 +316,14 @@ export function Queue() {
           {isAdding && !items.some((i) => i.status === "downloading") && (
             <Skeleton className="h-[88px] w-full rounded-xl" />
           )}
-          {visibleItems.length === 0 && !isAdding && (
+          {isLoading &&
+            Array.from({ length: 3 }).map((_, idx) => (
+              <Skeleton
+                key={`queue-skeleton-${idx}`}
+                className="h-[88px] w-full rounded-xl"
+              />
+            ))}
+          {!isLoading && visibleItems.length === 0 && !isAdding && (
             <p className="text-muted-foreground py-12 text-center text-sm">
               {activeTab === "listened"
                 ? "Nenhum episódio ouvido ainda."
@@ -233,6 +341,7 @@ export function Queue() {
               onTranscribe={handleTranscribe}
               onDelete={handleDelete}
               onArchive={handleArchive}
+              onUnarchive={handleUnarchive}
               onReconvert={handleReconvert}
             />
           ))}
@@ -242,7 +351,7 @@ export function Queue() {
       {selectedItem && (
         <Player
           item={selectedItem}
-          onClose={() => setSelectedId(null)}
+          onClose={() => updateParam("item", null)}
           onUpdate={updateItem}
           onArchive={handleArchive}
           initialSeekSeconds={pendingSeek}

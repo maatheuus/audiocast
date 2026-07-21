@@ -28,10 +28,13 @@ export function convert(url: string): Promise<QueueItem> {
   })
 }
 
-export function transcribe(id: string): Promise<QueueItem> {
+export function transcribe(
+  id: string,
+  language: string | null = null,
+): Promise<QueueItem> {
   return request("/api/transcribe", {
     method: "POST",
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, language }),
   })
 }
 
