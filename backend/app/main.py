@@ -7,14 +7,15 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import json
+import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -51,6 +52,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+API_TOKEN = os.environ.get("API_TOKEN")
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    """The Fly app is publicly reachable, so /api is gated by a shared token that the
+    Cloudflare Worker injects. With API_TOKEN unset (local dev) the check is skipped."""
+    if API_TOKEN and request.method != "OPTIONS" and request.url.path.startswith("/api/"):
+        sent = request.headers.get("X-API-Token", "")
+        if not secrets.compare_digest(sent, API_TOKEN):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 class UrlBody(BaseModel):
