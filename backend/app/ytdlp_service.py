@@ -58,7 +58,7 @@ def download_audio(url: str, video_id: str) -> Path:
     options = {
         "quiet": True,
         "noplaylist": True,
-        "format": "bestaudio/best",
+        "format": "bestaudio/best/worst",
         "outtmpl": outtmpl,
         "postprocessors": [
             {

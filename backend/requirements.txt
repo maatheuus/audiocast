@@ -5,4 +5,4 @@ numpy<2
 python-multipart==0.0.32
 sqlmodel==0.0.39
 uvicorn==0.51.0
-yt-dlp==2026.7.4
+yt-dlp>=2026.7.4
