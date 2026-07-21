@@ -6,6 +6,8 @@ import {
   Loader2,
   Pause,
   Play,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -37,6 +39,14 @@ const POSITION_SAVE_INTERVAL_SECONDS = 5
 const ARCHIVE_THRESHOLD = 0.95
 const SKIP_SECONDS = 15
 const VOLUME_STEP = 0.1
+const VOLUME_STORAGE_KEY = "player.volume"
+
+function readStoredVolume(): number {
+  if (typeof window === "undefined") return 1
+  const raw = window.localStorage.getItem(VOLUME_STORAGE_KEY)
+  const value = raw != null ? Number(raw) : NaN
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1
+}
 
 interface SelectionInfo {
   text: string
@@ -76,9 +86,12 @@ export function Player({
     Record<string, TranscriptSegment[]>
   >({})
   const [translating, setTranslating] = useState(false)
+  const [translateError, setTranslateError] = useState<string | null>(null)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [selectionInfo, setSelectionInfo] = useState<SelectionInfo | null>(null)
   const [highlightSaving, setHighlightSaving] = useState(false)
+  const [volume, setVolume] = useState<number>(() => readStoredVolume())
+  const [muted, setMuted] = useState(false)
   const lastSavedPositionRef = useRef(0)
   const archiveTriggeredRef = useRef(false)
 
@@ -94,6 +107,16 @@ export function Player({
     archiveTriggeredRef.current = item.status === "archived"
   }, [item.id])
 
+  // Reopening the same episode from Highlights: seek without remounting audio.
+  useEffect(() => {
+    if (initialSeekSeconds == null) return
+    const audio = audioRef.current
+    if (!audio || !audio.duration || initialSeekSeconds >= audio.duration) return
+    audio.currentTime = initialSeekSeconds
+    setCurrentTime(initialSeekSeconds)
+    onSeekConsumed()
+  }, [initialSeekSeconds])
+
   useEffect(() => {
     api
       .fetchHighlights(item.id)
@@ -106,11 +129,13 @@ export function Player({
   }, [speed])
 
   useEffect(() => {
-    if (
-      selectedLang === "original" ||
-      selectedLang === item.transcript_language
-    )
-      return
+    if (audioRef.current) audioRef.current.volume = muted ? 0 : volume
+    if (!muted) window.localStorage.setItem(VOLUME_STORAGE_KEY, String(volume))
+  }, [volume, muted])
+
+  useEffect(() => {
+    setTranslateError(null)
+    if (selectedLang === "original") return
     if (translations[selectedLang]) return
     setTranslating(true)
     api
@@ -118,7 +143,13 @@ export function Player({
       .then((res) =>
         setTranslations((prev) => ({ ...prev, [selectedLang]: res.segments })),
       )
-      .catch(() => {})
+      .catch((err) =>
+        setTranslateError(
+          err instanceof Error
+            ? err.message
+            : "Não foi possível traduzir a transcrição.",
+        ),
+      )
       .finally(() => setTranslating(false))
   }, [selectedLang, item.id])
 
@@ -157,9 +188,8 @@ export function Player({
   }
 
   function changeVolume(delta: number) {
-    const audio = audioRef.current
-    if (!audio) return
-    audio.volume = Math.min(1, Math.max(0, audio.volume + delta))
+    setMuted(false)
+    setVolume((prev) => Math.min(1, Math.max(0, prev + delta)))
   }
 
   function handleSeekInput(event: React.ChangeEvent<HTMLInputElement>) {
@@ -216,14 +246,13 @@ export function Player({
     setSelectionInfo({ text: selection.toString().trim(), startTime, rect })
   }
 
-  async function confirmHighlight() {
-    if (!selectionInfo) return
+  async function saveHighlight(text: string, startTime: number) {
     setHighlightSaving(true)
     try {
       await api.createHighlight({
         queue_item_id: item.id,
-        text: selectionInfo.text,
-        start_time: selectionInfo.startTime,
+        text,
+        start_time: startTime,
       })
       const updated = await api.fetchHighlights(item.id)
       setHighlights(updated)
@@ -231,15 +260,25 @@ export function Player({
       // ignore, selection just clears without saving
     } finally {
       setHighlightSaving(false)
-      setSelectionInfo(null)
-      window.getSelection()?.removeAllRanges()
     }
+  }
+
+  async function confirmHighlight() {
+    if (!selectionInfo) return
+    await saveHighlight(selectionInfo.text, selectionInfo.startTime)
+    setSelectionInfo(null)
+    window.getSelection()?.removeAllRanges()
+  }
+
+  async function highlightSegment(segment: TranscriptSegment) {
+    await saveHighlight(segment.text, segment.start)
   }
 
   function handleLoadedMetadata(event: React.SyntheticEvent<HTMLAudioElement>) {
     const audio = event.currentTarget
     setDuration(audio.duration)
     audio.playbackRate = speed
+    audio.volume = muted ? 0 : volume
     if (initialSeekSeconds != null && initialSeekSeconds < audio.duration) {
       audio.currentTime = initialSeekSeconds
       setCurrentTime(initialSeekSeconds)
@@ -351,9 +390,9 @@ export function Player({
   }, [])
 
   const displaySegments =
-    selectedLang === "original" || selectedLang === item.transcript_language
+    selectedLang === "original"
       ? item.transcript_segments
-      : (translations[selectedLang] ?? [])
+      : (translations[selectedLang] ?? item.transcript_segments)
 
   return (
     <div className="border-border bg-card/95 fixed inset-x-0 bottom-0 border-t backdrop-blur">
@@ -394,70 +433,97 @@ export function Player({
           onEnded={() => setIsPlaying(false)}
         />
 
+        <div className="flex items-center gap-3">
+          <Button
+            size="icon"
+            onClick={togglePlay}
+            aria-label={isPlaying ? "Pausar" : "Reproduzir"}
+          >
+            {isPlaying ? (
+              <Pause className="size-4" />
+            ) : (
+              <Play className="size-4" />
+            )}
+          </Button>
+          <span className="text-muted-foreground w-10 shrink-0 text-xs tabular-nums">
+            {formatDuration(currentTime)}
+          </span>
+          <div className="relative flex-1">
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeekInput}
+              className="bg-muted accent-primary h-1.5 w-full cursor-pointer appearance-none rounded-full"
+            />
+            {duration > 0 &&
+              item.chapters.map((chapter) => (
+                <div
+                  key={chapter.start_time}
+                  className="bg-foreground/40 pointer-events-none absolute top-1/2 h-2 w-0.5 -translate-y-1/2"
+                  style={{
+                    left: `${(chapter.start_time / duration) * 100}%`,
+                  }}
+                />
+              ))}
+          </div>
+          <span className="text-muted-foreground w-10 shrink-0 text-xs tabular-nums">
+            {formatDuration(duration)}
+          </span>
+          <Select
+            value={String(speed)}
+            onValueChange={(v) => setSpeed(Number(v))}
+          >
+            <SelectTrigger size="sm" className="w-[4.5rem]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SPEED_OPTIONS.map((option) => (
+                <SelectItem key={option} value={String(option)}>
+                  {option}x
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setMuted((m) => !m)}
+              aria-label={muted ? "Ativar som" : "Silenciar"}
+            >
+              {muted || volume === 0 ? (
+                <VolumeX className="size-4" />
+              ) : (
+                <Volume2 className="size-4" />
+              )}
+            </Button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={muted ? 0 : volume}
+              onChange={(e) => {
+                setMuted(false)
+                setVolume(Number(e.target.value))
+              }}
+              className="bg-muted accent-primary h-1.5 w-20 cursor-pointer appearance-none rounded-full"
+              aria-label="Volume"
+            />
+          </div>
+        </div>
+
         <Tabs defaultValue="audio">
           <TabsList>
-            <TabsTrigger value="audio">Áudio</TabsTrigger>
+            <TabsTrigger value="audio">Capítulos</TabsTrigger>
             <TabsTrigger value="transcription">Transcrição</TabsTrigger>
           </TabsList>
 
           <TabsContent value="audio" className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <Button
-                size="icon"
-                onClick={togglePlay}
-                aria-label={isPlaying ? "Pausar" : "Reproduzir"}
-              >
-                {isPlaying ? (
-                  <Pause className="size-4" />
-                ) : (
-                  <Play className="size-4" />
-                )}
-              </Button>
-              <span className="text-muted-foreground w-10 shrink-0 text-xs tabular-nums">
-                {formatDuration(currentTime)}
-              </span>
-              <div className="relative flex-1">
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  step={0.1}
-                  value={currentTime}
-                  onChange={handleSeekInput}
-                  className="bg-muted accent-primary h-1.5 w-full cursor-pointer appearance-none rounded-full"
-                />
-                {duration > 0 &&
-                  item.chapters.map((chapter) => (
-                    <div
-                      key={chapter.start_time}
-                      className="bg-foreground/40 pointer-events-none absolute top-1/2 h-2 w-0.5 -translate-y-1/2"
-                      style={{
-                        left: `${(chapter.start_time / duration) * 100}%`,
-                      }}
-                    />
-                  ))}
-              </div>
-              <span className="text-muted-foreground w-10 shrink-0 text-xs tabular-nums">
-                {formatDuration(duration)}
-              </span>
-              <Select
-                value={String(speed)}
-                onValueChange={(v) => setSpeed(Number(v))}
-              >
-                <SelectTrigger size="sm" className="w-[4.5rem]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SPEED_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={String(option)}>
-                      {option}x
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {item.chapters.length > 0 && (
+            {item.chapters.length > 0 ? (
               <ScrollArea className="border-border bg-muted/50 h-32 rounded-xl border">
                 <div className="flex flex-col p-1">
                   {item.chapters.map((chapter) => (
@@ -477,6 +543,10 @@ export function Player({
                   ))}
                 </div>
               </ScrollArea>
+            ) : (
+              <p className="text-muted-foreground py-6 text-center text-sm">
+                Sem capítulos para este vídeo.
+              </p>
             )}
           </TabsContent>
 
@@ -501,9 +571,19 @@ export function Player({
                 <Loader2 className="text-muted-foreground size-4 animate-spin" />
               )}
             </div>
+            {translateError && (
+              <p className="text-destructive text-left text-xs">
+                {translateError}
+              </p>
+            )}
 
             {displaySegments.length > 0 ? (
               <>
+                <p className="text-muted-foreground text-left text-xs">
+                  Selecione trecho com o mouse para destacar, ou use o ícone{" "}
+                  <Highlighter className="inline size-3" /> para destacar uma
+                  frase inteira.
+                </p>
                 {selectedSegments.size > 0 && (
                   <div className="bg-muted flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm">
                     <span className="text-muted-foreground">
@@ -590,6 +670,18 @@ export function Player({
                               <Copy className="size-3.5" />
                             )}
                           </Button>
+                          {!isHighlighted && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-6 shrink-0"
+                              disabled={highlightSaving}
+                              onClick={() => highlightSegment(segment)}
+                              aria-label="Destacar frase"
+                            >
+                              <Highlighter className="size-3.5" />
+                            </Button>
+                          )}
                         </div>
                       )
                     })}

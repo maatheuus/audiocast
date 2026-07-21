@@ -75,6 +75,11 @@ class IdBody(BaseModel):
     id: str
 
 
+class TranscribeBody(BaseModel):
+    id: str
+    language: Optional[str] = None
+
+
 class PatchBody(BaseModel):
     last_position_seconds: Optional[float] = None
     status: Optional[str] = None
@@ -154,7 +159,7 @@ def get_audio(item_id: str):
 
 
 @app.post("/api/transcribe")
-def transcribe(body: IdBody):
+def transcribe(body: TranscribeBody):
     # Imported lazily: faster-whisper pulls in torch/ctranslate2, which take ~50s to load.
     # At module level that delays the uvicorn bind past Fly's proxy timeout.
     from . import whisper_service
@@ -169,7 +174,9 @@ def transcribe(body: IdBody):
         session.commit()
 
         try:
-            text, segments, language = whisper_service.transcribe(item.audio_path)
+            text, segments, language = whisper_service.transcribe(
+                item.audio_path, body.language
+            )
         except Exception as exc:
             item.status = "error"
             session.add(item)
@@ -247,15 +254,23 @@ def delete_audio(item_id: str):
 @app.post("/api/translate")
 def translate_transcript(body: TranslateBody):
     # Lazy for the same reason as whisper_service in /api/transcribe.
+    import logging
+
     from . import translate_service
+
+    logger = logging.getLogger(__name__)
 
     with get_session() as session:
         item = session.get(QueueItem, body.queue_item_id)
         if item is None or not item.transcript_segments:
             raise HTTPException(status_code=404, detail="Transcript not found")
 
-        if body.target_lang == item.transcript_language:
-            return {"lang": body.target_lang, "segments": json.loads(item.transcript_segments)}
+        source_lang = item.transcript_language or "en"
+        if body.target_lang == source_lang:
+            return {
+                "lang": body.target_lang,
+                "segments": json.loads(item.transcript_segments),
+            }
 
         existing = session.exec(
             select(Translation).where(
@@ -269,9 +284,15 @@ def translate_transcript(body: TranslateBody):
         segments = json.loads(item.transcript_segments)
         try:
             translated = translate_service.translate_segments(
-                segments, item.transcript_language or "pt", body.target_lang
+                segments, source_lang, body.target_lang
             )
         except Exception as exc:
+            logger.exception(
+                "Translation failed for %s: %s -> %s",
+                body.queue_item_id,
+                source_lang,
+                body.target_lang,
+            )
             raise HTTPException(status_code=500, detail=str(exc))
 
         translation = Translation(

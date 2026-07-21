@@ -1,9 +1,10 @@
-import { Play, Trash2 } from "lucide-react"
+import { Check, Play, Share2, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 import * as api from "@/lib/api"
 import { formatDuration } from "@/lib/format"
 import type { Highlight, QueueItem } from "@/types"
@@ -12,16 +13,14 @@ export function Highlights() {
   const navigate = useNavigate()
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [items, setItems] = useState<QueueItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [sharedId, setSharedId] = useState<number | null>(null)
 
   useEffect(() => {
-    api
-      .fetchHighlights()
-      .then(setHighlights)
-      .catch(() => {})
-    api
-      .fetchQueue()
-      .then(setItems)
-      .catch(() => {})
+    Promise.allSettled([
+      api.fetchHighlights().then(setHighlights),
+      api.fetchQueue().then(setItems),
+    ]).finally(() => setIsLoading(false))
   }, [])
 
   async function handleDelete(id: number) {
@@ -31,6 +30,32 @@ export function Highlights() {
 
   function openAt(queueItemId: string, seekTo: number) {
     navigate("/", { state: { openItemId: queueItemId, seekTo } })
+  }
+
+  async function shareQuote(highlight: Highlight, item?: QueueItem) {
+    const parts = [`"${highlight.text}"`]
+    if (item?.title) {
+      parts.push(`— ${item.title}${item.channel ? ` (${item.channel})` : ""}`)
+    }
+    if (item?.url) parts.push(item.url)
+    const text = parts.join("\n")
+    try {
+      if (navigator.share) {
+        await navigator.share({ text, title: item?.title ?? "Destaque" })
+      } else {
+        await navigator.clipboard.writeText(text)
+        setSharedId(highlight.id)
+        setTimeout(
+          () =>
+            setSharedId((current) =>
+              current === highlight.id ? null : current,
+            ),
+          1500,
+        )
+      }
+    } catch {
+      // user cancelled share sheet
+    }
   }
 
   const itemsById = new Map(items.map((i) => [i.id, i]))
@@ -43,7 +68,23 @@ export function Highlights() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-10">
-      {grouped.size === 0 && (
+      {isLoading && (
+        <div className="flex flex-col gap-6">
+          {Array.from({ length: 2 }).map((_, groupIdx) => (
+            <div key={`highlight-skeleton-${groupIdx}`}>
+              <div className="mb-2 flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-lg" />
+                <Skeleton className="h-4 w-48" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-14 w-full rounded-xl" />
+                <Skeleton className="h-14 w-full rounded-xl" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {!isLoading && grouped.size === 0 && (
         <p className="text-muted-foreground py-12 text-center text-sm">
           Nenhum destaque ainda. Selecione um trecho da transcrição no player
           para destacar.
@@ -85,6 +126,18 @@ export function Highlights() {
                       aria-label="Reproduzir a partir daqui"
                     >
                       <Play className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => shareQuote(highlight, item)}
+                      aria-label="Compartilhar destaque"
+                    >
+                      {sharedId === highlight.id ? (
+                        <Check className="size-4" />
+                      ) : (
+                        <Share2 className="size-4" />
+                      )}
                     </Button>
                     <Button
                       size="icon"
