@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import select
 
-from . import translate_service, ytdlp_service, whisper_service
+from . import ytdlp_service
 from .db import AUDIO_CLEANUP_DAYS, Highlight, QueueItem, Translation, get_session, init_db
 
 
@@ -141,6 +141,10 @@ def get_audio(item_id: str):
 
 @app.post("/api/transcribe")
 def transcribe(body: IdBody):
+    # Imported lazily: faster-whisper pulls in torch/ctranslate2, which take ~50s to load.
+    # At module level that delays the uvicorn bind past Fly's proxy timeout.
+    from . import whisper_service
+
     with get_session() as session:
         item = session.get(QueueItem, body.id)
         if item is None or not item.audio_path:
@@ -228,6 +232,9 @@ def delete_audio(item_id: str):
 
 @app.post("/api/translate")
 def translate_transcript(body: TranslateBody):
+    # Lazy for the same reason as whisper_service in /api/transcribe.
+    from . import translate_service
+
     with get_session() as session:
         item = session.get(QueueItem, body.queue_item_id)
         if item is None or not item.transcript_segments:
