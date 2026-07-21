@@ -52,3 +52,18 @@ Archived (listened) episodes have their MP3 file automatically deleted after the
 ```bash
 AUDIO_CLEANUP_DAYS=30 uvicorn app.main:app --reload
 ```
+
+## Autenticação do YouTube (produção)
+
+Em produção (Fly.io), o YouTube costuma bloquear requisições vindas de IP de datacenter com o erro "Sign in to confirm you're not a bot". Pra contornar isso, o backend aceita um arquivo de cookies opcional (via `COOKIES_FILE`) que é passado pro yt-dlp.
+
+1. Gere o arquivo de cookies localmente, uma vez, logado no navegador com uma conta do YouTube:
+   ```bash
+   yt-dlp --cookies-from-browser firefox --cookies cookies.txt https://youtube.com
+   ```
+2. Suba esse arquivo pro volume persistente do Fly (via console SSH do dashboard do Fly.io), salvando em `/data/cookies.txt`.
+3. Confirme que a env var `COOKIES_FILE=/data/cookies.txt` está configurada no Fly, no mesmo lugar onde `DATA_DIR` já está configurada (bloco `[env]` do `fly.toml`).
+
+Sem `COOKIES_FILE` configurada (ou com o arquivo ausente), o backend continua funcionando normalmente, apenas logando um aviso de que requisições podem ser bloqueadas.
+
+Cookies do YouTube expiram (geralmente algumas semanas a meses). Quando o erro de bot-check voltar a aparecer, repita os passos 1 e 2 pra regerar e reenviar o arquivo.

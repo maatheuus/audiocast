@@ -1,9 +1,13 @@
+import logging
+import os
 from pathlib import Path
 from typing import TypedDict
 
 import yt_dlp
 
 from .db import AUDIO_DIR
+
+logger = logging.getLogger(__name__)
 
 
 class Chapter(TypedDict):
@@ -28,8 +32,16 @@ def _extract_chapters(info: dict) -> list[Chapter]:
     ]
 
 
+def _cookies_option() -> dict:
+    cookies_file = os.environ.get("COOKIES_FILE")
+    if cookies_file and os.path.isfile(cookies_file):
+        return {"cookiefile": cookies_file}
+    logger.warning("cookies não configurados, requisições podem ser bloqueadas pelo YouTube")
+    return {}
+
+
 def fetch_info(url: str) -> VideoInfo:
-    with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True}) as ydl:
+    with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True, **_cookies_option()}) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
         "id": info["id"],
@@ -55,6 +67,7 @@ def download_audio(url: str, video_id: str) -> Path:
                 "preferredquality": "192",
             }
         ],
+        **_cookies_option(),
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([url])
