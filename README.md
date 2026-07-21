@@ -7,7 +7,7 @@ Stack:
 - **Frontend** — React 19 + Vite + TypeScript + Tailwind v4 + shadcn/ui, deployed to Cloudflare Workers (static assets + a small Worker that proxies `/api/*` to the backend).
 - **Backend** — FastAPI + yt-dlp + faster-whisper + argos-translate + SQLite (SQLModel), deployed to Fly.io with a persistent volume.
 
-No auth — personal use only.
+No user login — personal use only. The backend is protected by a shared token the Worker injects (see [API token](#api-token)).
 
 ## Project layout
 
@@ -68,20 +68,41 @@ Other scripts: `yarn lint` (oxlint), `yarn format`, `yarn build`, `yarn deploy`.
 | `DATA_DIR`           | `backend/storage` | Where the SQLite DB and MP3s live            |
 | `AUDIO_CLEANUP_DAYS` | `14`              | Days before archived episodes lose their MP3 |
 | `COOKIES_FILE`       | _(unset)_         | yt-dlp cookies file, needed in production    |
+| `API_TOKEN`          | _(unset)_         | Shared token required on `/api/*`; unset disables the check |
 
 In production (`backend/fly.toml`) `DATA_DIR=/data` and `COOKIES_FILE=/data/cookies.txt`, both on the Fly volume mounted at `/data`.
 
 **Frontend Worker**
 
-| Var               | What it does                                  |
-| ----------------- | --------------------------------------------- |
-| `FLY_BACKEND_URL` | Backend origin the Worker proxies `/api/*` to |
+| Var               | What it does                                       |
+| ----------------- | -------------------------------------------------- |
+| `FLY_BACKEND_URL` | Backend origin the Worker proxies `/api/*` to      |
+| `API_TOKEN`       | Injected as `X-API-Token` on every proxied request |
 
-Locally, copy `frontend/.dev.vars.example` to `frontend/.dev.vars`. In production, set it as a Worker secret:
+Locally, copy `frontend/.dev.vars.example` to `frontend/.dev.vars`. In production, set them as Worker secrets:
 
 ```bash
 npx wrangler secret put FLY_BACKEND_URL
+npx wrangler secret put API_TOKEN
 ```
+
+## API token
+
+The Fly backend has no login and its URL is public, so anyone could hit `/api/*` — burning CPU and disk on `/api/convert`, or deleting queue items. To stop that, the backend requires a shared token on every `/api/*` request and the Worker injects it; the browser never sees it.
+
+1. Generate a token:
+   ```bash
+   openssl rand -hex 32
+   ```
+2. Set it on both sides, with the **same value**:
+   ```bash
+   fly secrets set API_TOKEN=<token>     # from /backend
+   npx wrangler secret put API_TOKEN     # from /frontend
+   ```
+
+Order matters on the first rollout: set the Worker secret and deploy the Worker **before** setting `API_TOKEN` on Fly, otherwise the frontend gets `401` in between.
+
+With `API_TOKEN` unset the check is skipped, so local dev keeps working with no config.
 
 ## Accessing from your phone / another device on the same network
 
